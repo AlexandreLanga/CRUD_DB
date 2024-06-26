@@ -1,0 +1,165 @@
+-- FEITO EM MODELO SQLSERVER
+
+-- Criando o banco de dados VENDAS_AEREAS 
+CREATE DATABASE VENDAS_AEREAS;
+GO
+
+USE VENDAS_AEREAS;
+GO
+
+-- Tabela CLIENTE
+CREATE TABLE CLIENTE (
+    CliId INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    Nome VARCHAR(60),
+    CPF BIGINT,
+    RG INT,
+    DataNasc DATETIME,
+    Email VARCHAR(100),
+    Cidade VARCHAR(50),
+    UF CHAR(2)
+);
+
+-- Tabela VOO
+CREATE TABLE VOO (
+    VooId INT PRIMARY KEY IDENTITY(1,1),
+    Origem VARCHAR(100),
+    Destino VARCHAR(100),
+    DataHora DATETIME,
+    Preco DECIMAL(10, 2),
+    Classe SMALLINT,
+	Empresa VARCHAR(5)
+);
+
+-- Tabela RESERVA
+CREATE TABLE RESERVA (
+    ResId INT PRIMARY KEY IDENTITY(1,1),
+    CliIdRes INT,
+    VooId INT,
+    DataReserva DATETIME,
+    Situacao CHAR(1),
+    FOREIGN KEY (CliIdRes) REFERENCES CLIENTE(CliId),
+    FOREIGN KEY (VooId) REFERENCES VOO(VooId)
+);
+
+-- Tabela VENDA
+CREATE TABLE VENDA (
+    VendaId INT IDENTITY(1,1) PRIMARY KEY,
+    ResIdVenda INT NOT NULL,
+    DataVenda DATETIME NOT NULL,
+    ValorTotal DECIMAL(18, 2) NOT NULL,
+    Parcelas INT NOT NULL,
+    Operadora VARCHAR(50), 
+    CONSTRAINT FK_Venda_Reserva FOREIGN KEY (ResIdVenda) REFERENCES RESERVA(ResId)
+);
+
+-- Tabela RESERVA_AUXILIAR para copiar reservas não efetivadas
+CREATE TABLE RESERVA_AUXILIAR (
+    ResAuxId INT IDENTITY(1,1) PRIMARY KEY,
+    CliIdRes INT,
+    VooId INT,
+    DataReserva DATETIME,
+    Situacao CHAR(1)
+);
+
+--CRIAR UM POR UM, O SQL NÃO SUPORTA VÁRIAS DE UMA VEZ
+
+-- Função para calcular idade de um cliente
+CREATE FUNCTION CalcularIdadeCliente (@ClienteId INT)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @DataNasc DATETIME;
+    SELECT @DataNasc = DataNasc FROM CLIENTE WHERE CliId = @ClienteId;
+
+    DECLARE @Idade INT;
+    SET @Idade = DATEDIFF(YEAR, @DataNasc, GETDATE()) - CASE WHEN (MONTH(@DataNasc) > MONTH(GETDATE())) OR (MONTH(@DataNasc) = MONTH(GETDATE()) AND DAY(@DataNasc) > DAY(GETDATE())) THEN 1 ELSE 0 END;
+
+    RETURN @Idade;
+END;
+GO
+
+-- Função para contar reservas de um cliente em um período específico
+CREATE FUNCTION ContarReservas (@ClienteId INT, @DataInicio DATETIME, @DataFim DATETIME)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @NumeroReservas INT;
+    SELECT @NumeroReservas = COUNT(*)
+    FROM RESERVA
+    WHERE CliIdRes = @ClienteId
+    AND DataReserva BETWEEN @DataInicio AND @DataFim;
+
+    RETURN @NumeroReservas;
+END;
+GO
+
+-- Consulta de trechos de voos entre duas datas
+CREATE PROCEDURE ConsultarTrechosEntreDatas
+    @DataInicio DATETIME,
+    @DataFim DATETIME
+AS
+BEGIN
+    SELECT DataHora, Origem, Destino
+    FROM VOO
+    WHERE DataHora BETWEEN @DataInicio AND @DataFim;
+END;
+GO
+
+-- Consulta de voos de um cliente em um período específico
+CREATE PROCEDURE ConsultarVoosClientePeriodo
+    @ClienteId INT,
+    @DataInicio DATETIME,
+    @DataFim DATETIME
+AS
+BEGIN
+    SELECT VOO.VooId, VOO.Origem, VOO.Destino, VOO.DataHora, VOO.Preco, VOO.Classe
+    FROM VOO
+    INNER JOIN RESERVA ON VOO.VooId = RESERVA.VooId
+    WHERE RESERVA.CliIdRes = @ClienteId
+    AND RESERVA.DataReserva BETWEEN @DataInicio AND @DataFim;
+END;
+GO
+
+-- Consulta de reservas diárias em um voo
+CREATE PROCEDURE ConsultarReservasDiarias
+    @VooId INT
+AS
+BEGIN
+    SELECT CLIENTE.Nome, CLIENTE.Email, VOO.Origem, VOO.Destino
+    FROM RESERVA
+    INNER JOIN CLIENTE ON RESERVA.CliIdRes = CLIENTE.CliId
+    INNER JOIN VOO ON RESERVA.VooId = VOO.VooId
+    WHERE RESERVA.VooId = @VooId
+    AND RESERVA.Situacao = 'E'; -- Somente reservas efetivadas
+END;
+GO
+
+-- Consulta de total de pagamentos por operadora de cartões de crédito em um mês
+CREATE PROCEDURE ConsultarPagamentosOperadoraCartao
+    @Operadora VARCHAR(50),
+    @Mes INT,
+    @Ano INT
+AS
+BEGIN
+    SELECT SUM(ValorTotal) AS TotalPagamentos
+    FROM VENDA
+    INNER JOIN RESERVA ON VENDA.ResIdVenda = RESERVA.ResId
+    WHERE MONTH(VENDA.DataVenda) = @Mes
+    AND YEAR(VENDA.DataVenda) = @Ano
+    AND Operadora = @Operadora; -- Corrigido para Operadora
+END;
+GO
+
+-- Procedimento para copiar reservas não efetivadas para tabela auxiliar e excluir da original
+CREATE PROCEDURE CopiarExcluirReservasNaoEfetivadas
+AS
+BEGIN
+    INSERT INTO RESERVA_AUXILIAR (CliIdRes, VooId, DataReserva, Situacao)
+    SELECT CliIdRes, VooId, DataReserva, Situacao
+    FROM RESERVA
+    WHERE Situacao <> 'E'; -- Reservas não efetivadas
+
+    DELETE FROM RESERVA
+    WHERE Situacao <> 'E'; -- Reservas não efetivadas
+END;
+GO
